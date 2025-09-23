@@ -27,6 +27,7 @@ app.add_middleware(
 def read_root():
     return {"message": "Hello World"}
 
+
 SUPPORTED_LANGUAGES = [
     "unknown", "hi-IN", "bn-IN", "kn-IN", "ml-IN", 
     "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN", "en-IN", "gu-IN"
@@ -121,23 +122,37 @@ async def callTextToSpeechUsingSarvam(replyParam: str, language: str) -> bytes:
         tts_response = client.text_to_speech.convert(
             text=cleaned_text,
             target_language_code=language,
-            speaker="abhilash"  # Getting an indian male voice            
+            speaker="manisha"  
         )
         base64_audio = tts_response.audios[0]
         audio_bytes = base64.b64decode(base64_audio)
+        
+        # Print audio info for debugging
+        print(f"Audio bytes received: {len(audio_bytes)} bytes")
         return audio_bytes
     except Exception as e:
         print("TTS Error:", str(e))
         raise e
 
 def pcm_to_wav(pcm_bytes: bytes, sample_rate=16000, num_channels=1, sample_width=2) -> bytes:
-    with io.BytesIO() as wav_io:
-        with wave.open(wav_io, 'wb') as wf:
-            wf.setnchannels(num_channels)
-            wf.setsampwidth(sample_width)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm_bytes)
-        return wav_io.getvalue()
+    """Convert PCM audio bytes to WAV format."""
+    print(f"Converting {len(pcm_bytes)} bytes of PCM data to WAV format")
+    try:
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, 'wb') as wf:
+                wf.setnchannels(num_channels)
+                wf.setsampwidth(sample_width)
+                wf.setframerate(sample_rate)
+                wf.writeframes(pcm_bytes)
+            wav_bytes = wav_io.getvalue()
+            print(f"Successfully created WAV file: {len(wav_bytes)} bytes")
+            return wav_bytes
+    except Exception as e:
+        print(f"Error converting PCM to WAV: {str(e)}")
+        # If conversion fails, try to return the original bytes
+        # The API might already be returning WAV format
+        print("Returning original audio bytes")
+        return pcm_bytes
 
 @app.post("/upload-audio/")
 async def upload_audio(file: UploadFile = File(...), language: str = Form(...)):
@@ -155,26 +170,33 @@ async def upload_audio(file: UploadFile = File(...), language: str = Form(...)):
         
         # Step 3: Convert response to speech
         audio_bytes = await callTextToSpeechUsingSarvam(reply, language)
-        with open("raw_output.wav", "wb") as f:
+        
+        # Save raw bytes for debugging
+        debug_file = "debug_output.bin"
+        with open(debug_file, "wb") as f:
             f.write(audio_bytes)
-        #audio_stream = io.BytesIO(audio_bytes)
+        
+        # Create a WAV file in memory
         wav_bytes = pcm_to_wav(audio_bytes)
         
-        headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Disposition": 'inline; filename="output.wav"'
-        }
-        print("Returning the audio response now")
-        return Response(content=audio_bytes, media_type="audio/wav", headers=headers)
+        # Save WAV file for debugging
+        with open("debug_output.wav", "wb") as f:
+            f.write(wav_bytes)
+        
+        # Create a BytesIO object for streaming
+        audio_stream = io.BytesIO(wav_bytes)
+        
+        # Return StreamingResponse instead of Response
+        return StreamingResponse(
+            audio_stream,
+            media_type="audio/wav",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": 'attachment; filename="output.wav"'  # Changed to attachment for download
+            }
+        )
     except Exception as e:
         print(f"Error in upload_audio: {str(e)}")
         return {"error": str(e)}
-
-# @app.post("/transcribe")
-# async def transcribe_audio(file: UploadFile, language: str = "hi-IN"):
-#     if language not in SUPPORTED_LANGUAGES:
-#         return {"error": f"Unsupported language code. Please use one of: {', '.join(SUPPORTED_LANGUAGES)}"}
-#     text = await sttUsingSarvam(file, language)
-#     return {"transcription": text}
 
     
